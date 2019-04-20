@@ -65,7 +65,8 @@ class SingleResourceTagger(object):
         self.taggers['rds'] = RDSTagger(dryrun, verbose, role=role, region=region)
         self.taggers['elasticloadbalancing'] = LBTagger(dryrun, verbose, role=role, region=region)
         self.taggers['elasticache'] = ElasticacheTagger(dryrun, verbose, role=role, region=region)
-        self.taggers['s3'] = S3Tagger(dryrun, verbose, role=role, region=region)
+        # self.taggers['s3'] = S3Tagger(dryrun, verbose, role=role, region=region)
+        self.taggers['s3'] = S3ObjTagger(dryrun, verbose, role=role, region=region)
         self.taggers['es'] = ESTagger(dryrun, verbose, role=role, region=region)
         self.taggers['kinesis'] = KinesisTagger(dryrun, verbose, role=role, region=region)
         self.taggers['cloudfront'] = CloudfrontTagger(dryrun, verbose, role=role, region=region)
@@ -520,4 +521,41 @@ class S3Tagger(object):
     @retry(retry_on_exception=_is_retryable_exception, stop_max_delay=30000, wait_exponential_multiplier=1000)
     def _s3_put_bucket_tagging(self, **kwargs):
         return self.s3.put_bucket_tagging(**kwargs)
+
+
+class S3ObjTagger(object):
+    def __init__(self, dryrun, verbose, role=None, region=None):
+        self.dryrun = dryrun
+        self.verbose = verbose
+        self.s3 = _client('s3', role=role, region=region)
+
+    def tag(self, bucket_name, tags):
+        object_list = self._s3_list_objects(Bucket=bucket_name)
+
+        aws_tags = _dict_to_aws_tags(tags)
+        # aws_tags = {'TagSet' : [{'Key': 'Name', 'Value':'efefef S3 Object'} , {'Key': 'POC', 'Value': 'John Smith'} , {'Key': 'Dept','Value': 'IT'} , {'Key': 'Comp','Value':'CALLC'}]}
+
+        if self.verbose:
+            print("tagging %s with %s" % (bucket_name, _format_dict(tags)))
+        if not self.dryrun:
+            try:
+                for obj in object_list['Contents']:
+                    self._s3_put_object_tagging(Bucket=bucket_name, Key=obj['Key'],  Tagging={'TagSet': aws_tags})
+            except botocore.exceptions.ClientError as exception:
+                if exception.response["Error"]["Code"] in ['NoSuchBucket']:
+                    print("Resource not found: %s" % bucket_name)
+                else:
+                    raise exception
+
+    @retry(retry_on_exception=_is_retryable_exception, stop_max_delay=30000, wait_exponential_multiplier=1000)
+    def _s3_list_objects(self, **kwargs):
+        return self.s3.list_objects(**kwargs)
+
+    @retry(retry_on_exception=_is_retryable_exception, stop_max_delay=30000, wait_exponential_multiplier=1000)
+    def _s3_get_object_tagging(self, **kwargs):
+        return self.s3.get_object_tagging(**kwargs)
+
+    @retry(retry_on_exception=_is_retryable_exception, stop_max_delay=30000, wait_exponential_multiplier=1000)
+    def _s3_put_object_tagging(self, **kwargs):
+        return self.s3.put_object_tagging(**kwargs)
 
